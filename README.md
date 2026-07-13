@@ -1,5 +1,7 @@
 # HanaMobile
 
+> **한국어:** [README.ko.md](README.ko.md)
+
 Local-first Android assistant platform in Kotlin + Jetpack Compose.
 
 ## Proposed module/package structure
