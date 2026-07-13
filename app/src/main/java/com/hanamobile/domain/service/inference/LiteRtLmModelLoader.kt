@@ -23,9 +23,7 @@ class LiteRtLmModelLoader(
             ?.takeIf { it.isNotBlank() }
             ?: config.defaultModelFileName
 
-        if (!LiteRtLmModelSupport.isSafeFileName(fileName)) {
-            throw BackendException(BackendError.InvalidModelSelection(fileName))
-        }
+        LiteRtLmModelSupport.requireSafeFileName(fileName)
 
         val canonicalModelDir = modelDir.canonicalFile
         val file = File(canonicalModelDir, fileName).canonicalFile
@@ -39,10 +37,7 @@ class LiteRtLmModelLoader(
             throw BackendException(BackendError.InvalidModelPath(file.absolutePath))
         }
 
-        if (!LiteRtLmModelSupport.isSupportedExtension(file.name)) {
-            throw BackendException(BackendError.UnsupportedModelFile(file.absolutePath))
-        }
-
+        LiteRtLmModelSupport.requireSupportedExtension(file.name)
         return file
     }
 }

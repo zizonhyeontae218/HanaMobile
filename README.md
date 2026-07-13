@@ -44,6 +44,19 @@ Local-first Android assistant platform in Kotlin + Jetpack Compose.
 
 - Dependency: `com.google.ai.edge.litertlm:litertlm-android:0.10.1` in `app/build.gradle.kts`.
 - Model directory: `Android/media/com.hanamobile/models` (in-app model selection from files in `models/`).
-- Supported local model files: `.litertlm`.
-- Backend wiring: `HanaApplication` builds `BackendConfig` + `LocalModelCatalog` and injects `LiteRtLmLocalInferenceBackend` into `SessionManager`.
+- Supported local model files: **`.litertlm` only**.
+- Backend wiring: `HanaApplication` uses `LiteRtLmBackendProvider` to build `BackendConfig` + `LocalModelCatalog` and inject `LiteRtLmLocalInferenceBackend` into `SessionManager`.
 - See `docs/litert-lm-backend.md` for troubleshooting and model swapping.
+- 엔진 재초기화 조건: 엔진 미존재, 또는 runtime signature( canonical model path + runtime config ) 변경시에만 재초기화
+- `executionTarget`는 현재 예약 필드이며, 이 버전에서는 엔진 생성 인자로 아직 직접 반영되지 않음
+
+## Model filename policy
+
+For 안전한 로컬 파일 선택(path traversal 방지) 때문에 모델 선택 문자열은 아래 규칙을 따릅니다.
+
+- plain filename only (디렉터리 구분자 금지)
+- 허용 문자: `A-Z a-z 0-9 . _ -`
+- dotfile 금지 (`.hidden.litertlm` 불가)
+- 확장자는 `.litertlm`만 허용
+
+이 정책은 `LocalModelCatalog`와 `LiteRtLmModelLoader`에서 동일하게 사용됩니다.

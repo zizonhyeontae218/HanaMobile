@@ -5,7 +5,6 @@ import java.io.File
 
 class LocalModelCatalog(private val context: Context) {
 
-
     fun modelDirectory(): File {
         val mediaRoot = context.externalMediaDirs.firstOrNull()
         val dir = File(mediaRoot ?: context.filesDir, "models")

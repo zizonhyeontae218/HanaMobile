@@ -9,37 +9,51 @@ import com.hanamobile.core.model.MessageRole
  */
 class LiteRtLmPromptFormatter {
     fun format(request: BackendRequest): String {
-        val parts = mutableListOf<String>()
+        val parts = mutableListOf<PromptSegment>()
 
         if (request.systemPrompt.isNotBlank()) {
-            parts += "<system>\n${request.systemPrompt.trim()}\n</system>"
+            parts += PromptSegment("system", request.systemPrompt.trim())
         }
 
         if (request.memoryBlock.isNotBlank()) {
-            parts += "<memory>\n${request.memoryBlock.trim()}\n</memory>"
+            parts += PromptSegment("memory", request.memoryBlock.trim())
         }
 
         if (request.toolResults.isNotEmpty()) {
             val toolBlock = request.toolResults.joinToString("\n") {
                 "- ${it.toolName}: ${it.outputText}"
             }
-            parts += "<tools>\n$toolBlock\n</tools>"
+            parts += PromptSegment("tools", toolBlock)
         }
 
         request.history.forEach { message ->
-            val role = when (message.role) {
-                MessageRole.SYSTEM -> "system"
-                MessageRole.MEMORY -> "memory"
-                MessageRole.USER -> "user"
-                MessageRole.ASSISTANT -> "assistant"
-                MessageRole.TOOL -> "tool"
-            }
-            parts += "<$role>\n${message.content.trim()}\n</$role>"
+            parts += PromptSegment(roleTag(message.role), message.content.trim())
         }
 
-        parts += "<user>\n${request.userInput.trim()}\n</user>"
-        parts += "<assistant>"
+        parts += PromptSegment("user", request.userInput.trim())
+        parts += PromptSegment("assistant", "", closeTag = false)
 
-        return parts.joinToString(separator = "\n\n")
+        return parts.joinToString(separator = "\n\n") { it.toPromptText() }
     }
+
+    private fun roleTag(role: MessageRole): String = when (role) {
+        MessageRole.SYSTEM -> "system"
+        MessageRole.MEMORY -> "memory"
+        MessageRole.USER -> "user"
+        MessageRole.ASSISTANT -> "assistant"
+        MessageRole.TOOL -> "tool"
+    }
+}
+
+private data class PromptSegment(
+    val role: String,
+    val text: String,
+    val closeTag: Boolean = true
+) {
+    fun toPromptText(): String =
+        if (closeTag) {
+            "<$role>\n$text\n</$role>"
+        } else {
+            "<$role>"
+        }
 }

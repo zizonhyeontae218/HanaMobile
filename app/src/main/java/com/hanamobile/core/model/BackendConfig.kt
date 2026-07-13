@@ -7,7 +7,8 @@ data class BackendConfig(
     val backendId: String = "litert-lm",
     val modelDirectoryPath: String,
     val defaultModelFileName: String = "model.litertlm",
-    val generation: GenerationConfig = GenerationConfig()
+    val generation: GenerationConfig = GenerationConfig(),
+    val runtime: RuntimeConfig = RuntimeConfig()
 )
 
 data class GenerationConfig(
@@ -17,6 +18,17 @@ data class GenerationConfig(
     val temperature: Float = 0.7f,
     val randomSeed: Int = 0
 )
+
+data class RuntimeConfig(
+    // Reserved for future engine-target selection support.
+    val executionTarget: ExecutionTarget = ExecutionTarget.CPU_COMPAT
+)
+
+enum class ExecutionTarget {
+    CPU_COMPAT,
+    GPU_PREFERRED,
+    NPU_PREFERRED
+}
 
 sealed class BackendError(val message: String, val cause: Throwable? = null) {
     class ModelFileMissing(path: String) : BackendError("Model file was not found at: $path")
@@ -31,8 +43,12 @@ sealed class BackendError(val message: String, val cause: Throwable? = null) {
         BackendError("Failed to initialize LiteRT-LM backend: $details", cause)
 
     class UnsupportedSetting(details: String) : BackendError("Unsupported backend setting: $details")
+
     class GenerationFailure(details: String, cause: Throwable? = null) :
         BackendError("Text generation failed: $details", cause)
+
+    class EngineLifecycleFailure(details: String, cause: Throwable? = null) :
+        BackendError("LiteRT-LM engine lifecycle error: $details", cause)
 }
 
 class BackendException(val error: BackendError) : RuntimeException(error.message, error.cause)

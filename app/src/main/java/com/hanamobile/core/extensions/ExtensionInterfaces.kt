@@ -11,6 +11,10 @@ interface LocalInferenceBackend {
     suspend fun generate(request: BackendRequest): BackendResponse
 }
 
+interface StreamingLocalInferenceBackend : LocalInferenceBackend {
+    fun generateStream(request: BackendRequest): Flow<String>
+}
+
 interface SpeechToTextEngine {
     suspend fun startListening(onPartial: (String) -> Unit)
     suspend fun stopListening(): String

@@ -3,14 +3,20 @@ package com.hanamobile.domain.service.inference
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
-import com.google.ai.edge.litertlm.SamplerConfig
-import com.hanamobile.core.extensions.LocalInferenceBackend
+import com.hanamobile.core.extensions.StreamingLocalInferenceBackend
 import com.hanamobile.core.model.BackendConfig
 import com.hanamobile.core.model.BackendError
 import com.hanamobile.core.model.BackendException
 import com.hanamobile.core.model.BackendRequest
 import com.hanamobile.core.model.BackendResponse
+import com.hanamobile.core.model.RuntimeConfig
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -22,102 +28,125 @@ class LiteRtLmLocalInferenceBackend(
     private val config: BackendConfig,
     private val selectedModelProvider: suspend () -> String?,
     private val promptFormatter: LiteRtLmPromptFormatter = LiteRtLmPromptFormatter(),
-    private val modelLoader: LiteRtLmModelLoader = LiteRtLmModelLoader(config)
-) : LocalInferenceBackend {
+    private val modelLoader: LiteRtLmModelLoader = LiteRtLmModelLoader(config),
+    private val engineFactory: LiteRtLmEngineFactory = LiteRtLmEngineFactory.Default,
+    private val workerDispatcher: CoroutineDispatcher = Dispatchers.Default
+) : StreamingLocalInferenceBackend {
 
     private val initLock = Mutex()
+    private val engineSession = ModelEngineSession<EngineRuntimeSignature, Engine>()
 
-    @Volatile
-    private var engineHolder: EngineHolder? = null
+    override suspend fun generate(request: BackendRequest): BackendResponse {
+        val chunks = mutableListOf<String>()
+        generateStream(request).collect { chunk -> chunks += chunk }
+        val output = chunks.joinToString(separator = "").trim()
+        if (output.isBlank()) {
+            throw BackendException(BackendError.GenerationFailure("Empty response from LiteRT-LM runtime"))
+        }
 
-    override suspend fun generate(request: BackendRequest): BackendResponse = withContext(Dispatchers.Default) {
+        val modelFile = currentModelFile()
+        return BackendResponse(
+            text = output,
+            diagnostics = mapOf(
+                "backend" to config.backendId,
+                "modelPath" to modelFile.absolutePath,
+                "modelFile" to modelFile.name
+            )
+        )
+    }
+
+    override fun generateStream(request: BackendRequest): Flow<String> = flow {
+        val modelFile = currentModelFile()
+        val runtimeSignature = EngineRuntimeSignature(
+            canonicalModelPath = modelFile.absolutePath,
+            runtimeConfig = config.runtime
+        )
+        val engine = ensureEngineInitialized(runtimeSignature)
         val prompt = promptFormatter.format(request)
-        val selectedModel = selectedModelProvider()
-        val modelFile = modelLoader.resolveModelFile(selectedModel)
-        val engine = ensureEngineInitialized(modelFile.absolutePath)
 
         val conversationConfig = ConversationConfig(
-            samplerConfig = createSamplerConfig()
+            samplerConfig = GenerationConfigValidator.toSamplerConfig(config.generation)
         )
 
         try {
-            val output = engine.createConversation(conversationConfig).use { conversation ->
-                conversation.sendMessage(prompt).text.trim()
+            engine.createConversation(conversationConfig).use { conversation ->
+                conversation.sendMessageAsync(prompt)
+                    .map { it.text }
+                    .collect { chunk ->
+                        if (chunk.isNotEmpty()) emit(chunk)
+                    }
             }
-
-            if (output.isBlank()) {
-                throw BackendException(BackendError.GenerationFailure("Empty response from LiteRT-LM runtime"))
-            }
-
-            BackendResponse(
-                text = output,
-                diagnostics = mapOf(
-                    "backend" to config.backendId,
-                    "modelPath" to modelFile.absolutePath,
-                    "modelFile" to modelFile.name
-                )
-            )
         } catch (e: BackendException) {
             throw e
         } catch (e: Throwable) {
-            throw BackendException(BackendError.GenerationFailure(e.message ?: "Unknown generation error", e))
+            throw mapGenerationError(e)
+        }
+    }.catch { throwable ->
+        throw if (throwable is BackendException) throwable else mapGenerationError(throwable)
+    }
+
+    suspend fun close() {
+        initLock.withLock {
+            runCatching { engineSession.closeCurrent() }
+                .getOrElse { throw mapLifecycleError(it) }
         }
     }
 
-    private suspend fun ensureEngineInitialized(modelPath: String): Engine {
-        engineHolder?.takeIf { it.modelPath == modelPath }?.let { return it.engine }
+    private suspend fun currentModelFile() = withContext(workerDispatcher) {
+        val selectedModel = selectedModelProvider()
+        modelLoader.resolveModelFile(selectedModel)
+    }
+
+    private suspend fun ensureEngineInitialized(signature: EngineRuntimeSignature): Engine {
+        // Re-init only when there is no engine yet, or runtime signature changed.
+        engineSession.currentOrNull(signature)?.let { return it }
 
         return initLock.withLock {
-            engineHolder?.takeIf { it.modelPath == modelPath }?.let { return@withLock it.engine }
+            engineSession.currentOrNull(signature)?.let { return@withLock it }
 
-            validateGenerationSettings()
-
-            closeEngineIfAny()
-
-            try {
-                val engineConfig = EngineConfig(modelPath = modelPath)
-                val engine = Engine(engineConfig)
-                engine.initialize()
-                engineHolder = EngineHolder(modelPath = modelPath, engine = engine)
-                engine
-            } catch (e: BackendException) {
-                throw e
-            } catch (e: Throwable) {
-                throw BackendException(
-                    BackendError.ModelInitializationFailure(e.message ?: "Unknown initialization error", e)
-                )
+            withContext(workerDispatcher) {
+                try {
+                    GenerationConfigValidator.validate(config.generation)
+                    val engine = engineFactory.create(createEngineConfig(signature))
+                    engine.initialize()
+                    engineSession.swap(key = signature, newEngine = engine)
+                } catch (e: BackendException) {
+                    throw e
+                } catch (e: Throwable) {
+                    throw mapInitializationError(e)
+                }
             }
         }
     }
 
-    private fun validateGenerationSettings() {
-        val generation = config.generation
-        if (generation.maxTokens <= 0) throw BackendException(BackendError.UnsupportedSetting("maxTokens must be > 0"))
-        if (generation.topK <= 0) throw BackendException(BackendError.UnsupportedSetting("topK must be > 0"))
-        if (generation.topP !in 0f..1f) throw BackendException(BackendError.UnsupportedSetting("topP must be in [0, 1]"))
-        if (generation.temperature < 0f) throw BackendException(BackendError.UnsupportedSetting("temperature must be >= 0"))
-        if (generation.randomSeed < 0) throw BackendException(BackendError.UnsupportedSetting("randomSeed must be >= 0"))
+    private fun createEngineConfig(signature: EngineRuntimeSignature): EngineConfig {
+        // Note: litertlm-android:0.10.1 in this repo uses modelPath-based EngineConfig construction.
+        // executionTarget is tracked in signature/cache keys for future API support, but not yet applied
+        // to engine creation arguments in this version.
+        return EngineConfig(modelPath = signature.canonicalModelPath)
     }
 
-    private fun createSamplerConfig(): SamplerConfig {
-        val generation = config.generation
-        return SamplerConfig(
-            topK = generation.topK,
-            topP = generation.topP,
-            temperature = generation.temperature,
-            maxTokens = generation.maxTokens,
-            randomSeed = generation.randomSeed.toLong()
+    private fun mapInitializationError(e: Throwable): BackendException =
+        BackendException(
+            BackendError.ModelInitializationFailure(e.message ?: "Unknown initialization error", e)
         )
-    }
 
-    private fun closeEngineIfAny() {
-        val existing = engineHolder ?: return
-        runCatching { existing.engine.close() }
-        engineHolder = null
-    }
+    private fun mapGenerationError(e: Throwable): BackendException =
+        BackendException(BackendError.GenerationFailure(e.message ?: "Unknown generation error", e))
 
-    private data class EngineHolder(
-        val modelPath: String,
-        val engine: Engine
-    )
+    private fun mapLifecycleError(e: Throwable): BackendException =
+        BackendException(BackendError.EngineLifecycleFailure(e.message ?: "Unknown lifecycle error", e))
+}
+
+private data class EngineRuntimeSignature(
+    val canonicalModelPath: String,
+    val runtimeConfig: RuntimeConfig
+)
+
+fun interface LiteRtLmEngineFactory {
+    fun create(config: EngineConfig): Engine
+
+    object Default : LiteRtLmEngineFactory {
+        override fun create(config: EngineConfig): Engine = Engine(config)
+    }
 }
