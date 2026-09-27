@@ -1,0 +1,39 @@
+name: Build Ripple Demo APK
+
+on:
+  push:
+    branches:
+      - chatgpt/ripple-code-demo
+    paths:
+      - 'ripple-demo/**'
+      - '.github/workflows/build-ripple-demo.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Fix source typo before build
+        working-directory: ripple-demo
+        run: sed -i 's/text\.setTextColor/text.setColor/' app/src/main/java/com/openai/rippledemo/MainActivity.java
+
+      - name: Assemble debug APK
+        working-directory: ripple-demo
+        run: gradle --no-daemon :app:assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ripple-code-demo-apk
+          path: ripple-demo/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
