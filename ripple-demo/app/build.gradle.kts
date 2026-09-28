@@ -10,8 +10,8 @@ android {
         applicationId = "com.openai.rippledemo"
         minSdk = 33
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.6-surface-tension-skill"
+        versionCode = 7
+        versionName = "0.7-classic-clock"
     }
 
     compileOptions {
