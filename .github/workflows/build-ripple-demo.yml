@@ -28,6 +28,18 @@ jobs:
         working-directory: ripple-demo
         run: python3 tools/apply-classic-clock-v07.py
 
+      - name: Apply v0.8 platform bridge
+        working-directory: ripple-demo
+        run: python3 tools/apply-v08-platform.py
+
+      - name: Apply v0.8 motion polish
+        working-directory: ripple-demo
+        run: python3 tools/apply-v08-motion.py
+
+      - name: Apply v0.8 Surface Tension settings polish
+        working-directory: ripple-demo
+        run: python3 tools/apply-v08-settings.py
+
       - name: Fix source typo before build
         working-directory: ripple-demo
         run: sed -i 's/text\.setTextColor/text.setColor/' app/src/main/java/com/openai/rippledemo/MainActivity.java
