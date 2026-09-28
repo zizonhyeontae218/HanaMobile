@@ -1,259 +1,28 @@
 package com.openai.rippledemo;
-
-import android.app.Activity;
-import android.graphics.Canvas;
-import android.graphics.Color;
-import android.graphics.LinearGradient;
-import android.graphics.Paint;
-import android.graphics.RadialGradient;
-import android.graphics.RectF;
-import android.graphics.Shader;
-import android.os.Bundle;
-import android.os.SystemClock;
-import android.view.HapticFeedbackConstants;
-import android.view.MotionEvent;
-import android.view.View;
-import android.view.Window;
-import android.view.WindowInsets;
-import android.view.WindowInsetsController;
-import android.view.WindowManager;
-
-import java.util.ArrayList;
-import java.util.List;
-
-public class MainActivity extends Activity {
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        requestWindowFeature(Window.FEATURE_NO_TITLE);
-        getWindow().setStatusBarColor(Color.TRANSPARENT);
-        getWindow().setNavigationBarColor(Color.TRANSPARENT);
-        getWindow().setFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
-        setContentView(new RippleCodeView());
-
-        if (android.os.Build.VERSION.SDK_INT >= 30) {
-            WindowInsetsController c = getWindow().getInsetsController();
-            if (c != null) {
-                c.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
-                c.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-            }
-        } else {
-            getWindow().getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_FULLSCREEN |
-                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
-                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY |
-                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
-                    View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
-                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
-        }
-    }
-
-    private final class RippleCodeView extends View {
-        private static final int COLS = 2;
-        private static final int ROWS = 5;
-        private static final long RIPPLE_MS = 1350L;
-
-        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint line = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final List<Ripple> ripples = new ArrayList<>();
-        private final List<Integer> enrolled = new ArrayList<>();
-        private final List<Integer> current = new ArrayList<>();
-
-        private float downX, downY;
-        private boolean moved;
-        private final float density;
-        private String flash = "";
-        private long flashUntil = 0L;
-        private boolean matchedFlash = false;
-
-        RippleCodeView() {
-            super(MainActivity.this);
-            density = getResources().getDisplayMetrics().density;
-            setLayerType(View.LAYER_TYPE_SOFTWARE, null);
-            setFocusable(true);
-        }
-
-        @Override
-        protected void onDraw(Canvas canvas) {
-            super.onDraw(canvas);
-            int w = getWidth();
-            int h = getHeight();
-            long now = SystemClock.uptimeMillis();
-
-            paint.setShader(new LinearGradient(0, 0, 0, h,
-                    new int[]{Color.rgb(10,31,46), Color.rgb(11,74,86), Color.rgb(4,29,47)},
-                    new float[]{0f,0.55f,1f}, Shader.TileMode.CLAMP));
-            canvas.drawRect(0,0,w,h,paint);
-            paint.setShader(null);
-
-            line.setStrokeWidth(dp(1.3f));
-            line.setStyle(Paint.Style.STROKE);
-            for (int i=0;i<9;i++) {
-                float y = h * (0.19f + i * 0.075f);
-                line.setColor(Color.argb(18,205,245,255));
-                canvas.drawArc(new RectF(-w*0.15f, y-dp(16), w*1.15f, y+dp(26)),184,172,false,line);
-            }
-            line.setStyle(Paint.Style.FILL);
-
-            boolean animate = false;
-            for (int i=ripples.size()-1;i>=0;i--) {
-                Ripple r = ripples.get(i);
-                float t = (now-r.startedAt)/(float)RIPPLE_MS;
-                if (t >= 1f) { ripples.remove(i); continue; }
-                animate = true;
-                drawRipple(canvas,r,t);
-            }
-
-            text.setTypeface(android.graphics.Typeface.create("sans", android.graphics.Typeface.NORMAL));
-            text.setColor(Color.argb(238,240,250,255));
-            text.setTextSize(dp(28));
-            canvas.drawText("Ripple Code",dp(26),dp(68),text);
-
-            text.setTextSize(dp(14));
-            text.setColor(Color.argb(178,226,243,248));
-            String mode = enrolled.isEmpty() ? "등록 모드" : "테스트 모드";
-            canvas.drawText(mode + "  ·  탭 순서 + 마지막 스와이프",dp(27),dp(94),text);
-
-            RectF reset = resetRect();
-            paint.setColor(Color.argb(42,255,255,255));
-            canvas.drawRoundRect(reset,dp(18),dp(18),paint);
-            text.setTextSize(dp(13));
-            text.setColor(Color.argb(220,245,252,255));
-            canvas.drawText("초기화",reset.left+dp(17),reset.centerY()+dp(5),text);
-
-            text.setTextAlign(Paint.Align.CENTER);
-            text.setTextSize(dp(17));
-            text.setColor(Color.argb(205,238,249,252));
-            if (enrolled.isEmpty()) {
-                canvas.drawText("원하는 위치를 원하는 만큼 탭",w/2f,h*0.46f,text);
-                text.setTextSize(dp(14));
-                text.setColor(Color.argb(142,230,247,251));
-                canvas.drawText("마지막에 어느 방향으로든 한 번 쭉 스와이프",w/2f,h*0.46f+dp(29),text);
-            } else {
-                canvas.drawText("같은 위치를 같은 순서로 탭",w/2f,h*0.46f,text);
-                text.setTextSize(dp(14));
-                text.setColor(Color.argb(142,230,247,251));
-                canvas.drawText("스와이프 방향은 비교하지 않음",w/2f,h*0.46f+dp(29),text);
-            }
-
-            text.setTextSize(dp(15));
-            text.setColor(Color.argb(195,240,250,255));
-            canvas.drawText("현재 입력  " + current.size() + "회",w/2f,h-dp(72),text);
-            text.setTextSize(dp(12));
-            text.setColor(Color.argb(120,235,248,252));
-            canvas.drawText("숨은 판정 영역: 2 × 5  ·  총 10개 영역",w/2f,h-dp(46),text);
-            text.setTextAlign(Paint.Align.LEFT);
-
-            if (now < flashUntil && !flash.isEmpty()) {
-                float age = (flashUntil-now)/900f;
-                int alpha = (int)(255*Math.min(1f,age+0.15f));
-                paint.setColor(matchedFlash ? Color.argb(Math.min(alpha,96),117,255,194)
-                        : Color.argb(Math.min(alpha,72),255,184,160));
-                canvas.drawRect(0,0,w,h,paint);
-                text.setTextAlign(Paint.Align.CENTER);
-                text.setTextSize(dp(31));
-                text.setTypeface(android.graphics.Typeface.create("sans", android.graphics.Typeface.BOLD));
-                text.setColor(Color.argb(alpha,255,255,255));
-                canvas.drawText(flash,w/2f,h*0.67f,text);
-                text.setTextAlign(Paint.Align.LEFT);
-                animate = true;
-            }
-
-            if (animate) postInvalidateOnAnimation();
-        }
-
-        private void drawRipple(Canvas canvas, Ripple r, float t) {
-            float eased = (float)Math.pow(t,0.62);
-            float radius = dp(16) + Math.min(getWidth(),getHeight()) * 0.33f * eased;
-            int alpha = (int)(150*(1f-t)*(1f-t));
-            paint.setShader(new RadialGradient(r.x,r.y,Math.max(dp(1),radius),
-                    new int[]{Color.argb(0,255,255,255),Color.argb(Math.min(alpha,42),180,241,255),Color.argb(0,128,220,255)},
-                    new float[]{0.42f,0.77f,1f},Shader.TileMode.CLAMP));
-            canvas.drawCircle(r.x,r.y,radius,paint);
-            paint.setShader(null);
-
-            line.setStyle(Paint.Style.STROKE);
-            for (int i=0;i<4;i++) {
-                float rr = radius-dp(i*24f);
-                if (rr<=0) continue;
-                int a = Math.max(0,alpha-i*22);
-                line.setColor(Color.argb(a,220,249,255));
-                line.setStrokeWidth(dp(i==0 ? 2.1f : 1.25f));
-                canvas.drawCircle(r.x,r.y,rr,line);
-            }
-            line.setStyle(Paint.Style.FILL);
-        }
-
-        @Override
-        public boolean onTouchEvent(MotionEvent e) {
-            float x=e.getX(), y=e.getY();
-            if (e.getActionMasked()==MotionEvent.ACTION_DOWN) {
-                if (resetRect().contains(x,y)) {
-                    enrolled.clear(); current.clear();
-                    flash("등록값 초기화",false);
-                    performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK);
-                    invalidate(); return true;
-                }
-                downX=x; downY=y; moved=false;
-                ripples.add(new Ripple(x,y,SystemClock.uptimeMillis()));
-                performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK);
-                postInvalidateOnAnimation(); return true;
-            }
-            if (e.getActionMasked()==MotionEvent.ACTION_MOVE) {
-                float dx=x-downX, dy=y-downY;
-                if (dx*dx+dy*dy > swipeThreshold()*swipeThreshold()) moved=true;
-                return true;
-            }
-            if (e.getActionMasked()==MotionEvent.ACTION_UP) {
-                float dx=x-downX, dy=y-downY;
-                boolean swipe = moved || dx*dx+dy*dy > swipeThreshold()*swipeThreshold();
-                if (swipe) finalizeSequence();
-                else {
-                    current.add(zoneFor(x,y));
-                    performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-                }
-                invalidate(); return true;
-            }
-            if (e.getActionMasked()==MotionEvent.ACTION_CANCEL) { moved=false; return true; }
-            return true;
-        }
-
-        private void finalizeSequence() {
-            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
-            if (current.isEmpty()) { flash("먼저 한 번 이상 탭",false); return; }
-            if (enrolled.isEmpty()) {
-                enrolled.addAll(current);
-                int n=current.size(); current.clear();
-                flash("데모 코드 저장 · " + n + "회",true); return;
-            }
-            boolean match=enrolled.equals(current);
-            current.clear();
-            flash(match ? "MATCH" : "NO MATCH",match);
-            performHapticFeedback(match ? HapticFeedbackConstants.CONFIRM : HapticFeedbackConstants.REJECT);
-        }
-
-        private int zoneFor(float x,float y) {
-            int col=Math.max(0,Math.min(COLS-1,(int)(x/Math.max(1f,getWidth())*COLS)));
-            int row=Math.max(0,Math.min(ROWS-1,(int)(y/Math.max(1f,getHeight())*ROWS)));
-            return row*COLS+col;
-        }
-
-        private float swipeThreshold() { return Math.max(dp(76),Math.min(getWidth(),getHeight())*0.12f); }
-        private RectF resetRect() {
-            float right=getWidth()-dp(20);
-            return new RectF(right-dp(82),dp(37),right,dp(77));
-        }
-        private void flash(String s,boolean good) {
-            flash=s; matchedFlash=good; flashUntil=SystemClock.uptimeMillis()+900L;
-            postInvalidateOnAnimation();
-        }
-        private float dp(float v) { return v*density; }
-
-        private final class Ripple {
-            final float x,y; final long startedAt;
-            Ripple(float x,float y,long startedAt) { this.x=x; this.y=y; this.startedAt=startedAt; }
-        }
-    }
+import android.app.*;import android.graphics.*;import android.graphics.drawable.Drawable;import android.os.*;import android.view.*;import java.util.*;
+public class MainActivity extends Activity{
+ public void onCreate(Bundle b){super.onCreate(b);requestWindowFeature(Window.FEATURE_NO_TITLE);getWindow().setFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);setContentView(new V());}
+ final class V extends View{
+  final Paint p=new Paint(3),t=new Paint(3),l=new Paint(3),u=new Paint(3);final ArrayList<R> rs=new ArrayList<>();final ArrayList<Integer>a=new ArrayList<>(),c=new ArrayList<>();final float d;float dx,dy;boolean mv,set,unlocking,unlocked;long unlockAt;int sty=0;Drawable wall;
+  final String[] names={"Classic","Getura Mint","Getura Sunset","Getura Violet","Getura Lagoon"};
+  final int[][] cols={{10,31,46,11,74,86,4,29,47},{16,40,45,58,120,118,19,57,74},{41,24,54,167,98,124,245,176,132},{23,24,59,92,77,156,168,116,212},{10,27,46,18,83,126,65,173,178}};
+  V(){super(MainActivity.this);d=getResources().getDisplayMetrics().density;setLayerType(View.LAYER_TYPE_SOFTWARE,null);try{wall=WallpaperManager.getInstance(getContext()).getDrawable();}catch(Throwable e){wall=null;}}
+  float dp(float x){return x*d;} int C(int v){return Math.max(0,Math.min(255,v));}
+  protected void onDraw(Canvas x){int w=getWidth(),h=getHeight();long n=SystemClock.uptimeMillis();float q=unlocking?Math.min(1f,(n-unlockAt)/980f):(unlocked?1f:0f);if(q>=1&&unlocking){unlocking=false;unlocked=true;}bg(x,w,h,n);if(!unlocked||unlocking)lock(x,w,h,n,q);if(unlocking||set||!rs.isEmpty())postInvalidateOnAnimation();}
+  void bg(Canvas x,int w,int h,long n){if(wall!=null){wall.setBounds(0,0,w,h);wall.draw(x);}else{p.setShader(new LinearGradient(0,0,0,h,new int[]{Color.rgb(26,31,58),Color.rgb(48,62,122),Color.rgb(125,96,152)},null,Shader.TileMode.CLAMP));x.drawRect(0,0,w,h,p);p.setShader(null);}float ph=n/1300f;float X=w*(.68f+.05f*(float)Math.sin(ph));float Y=h*(.22f+.03f*(float)Math.cos(ph));p.setShader(new RadialGradient(X,Y,Math.max(w,h)*.34f,new int[]{0x22ffffff,0x08ffffff,0x00ffffff},null,Shader.TileMode.CLAMP));x.drawCircle(X,Y,Math.max(w,h)*.34f,p);p.setShader(null);}
+  void lock(Canvas x,int W,int H,long n,float q){float e=q<.5f?4*q*q*q:1-(float)Math.pow(-2*q+2,3)/2;float top=H*.96f*e,in=dp(12)*e;float w=W-2*in,h=H;float gap=w*.46f*e;x.save();x.translate(in,top);if(gap<1)surface(x,w,h,n);else{x.save();x.clipRect(0,0,w/2-gap,h);surface(x,w,h,n);x.restore();x.save();x.clipRect(w/2+gap,0,w,h);surface(x,w,h,n);x.restore();edge(x,w,h,gap,e,n);}if(e>0){l.setStyle(Paint.Style.STROKE);l.setStrokeWidth(dp(1));l.setColor(Color.argb((int)(20+50*e),255,255,255));x.drawRoundRect(new RectF(0,0,w,h),dp(28)*e,dp(28)*e,l);l.setStyle(Paint.Style.FILL);}x.restore();}
+  void surface(Canvas x,float w,float h,long n){int[] z=cols[sty];float ph=n/1400f,aa=.03f*(float)Math.sin(ph);int A=Color.rgb(C(z[0]+(int)(aa*80)),C(z[1]+(int)(aa*80)),C(z[2]+(int)(aa*80)));int B=Color.rgb(z[3],z[4],z[5]),D=Color.rgb(z[6],z[7],z[8]);p.setShader(new LinearGradient(0,0,0,h,new int[]{A,B,D},new float[]{0,.56f,1},Shader.TileMode.CLAMP));x.drawRect(0,0,w,h,p);p.setShader(null);shimmer(x,w,h,n);arcs(x,w,h,n);for(int i=rs.size()-1;i>=0;i--){R r=rs.get(i);float k=(n-r.n)/1600f;if(k>=1){rs.remove(i);continue;}ripple(x,r,k);}ui(x,w,h);if(set)settings(x,w,h);}
+  void shimmer(Canvas x,float w,float h,long n){float ph=n/1000f,X=w*(.25f+.05f*(float)Math.sin(ph*.58)),Y=h*(.28f+.04f*(float)Math.cos(ph*.72));p.setShader(new RadialGradient(X,Y,Math.max(w,h)*.22f,new int[]{0x18ffffff,0x06ffffff,0x00ffffff},null,Shader.TileMode.CLAMP));x.drawCircle(X,Y,Math.max(w,h)*.22f,p);p.setShader(null);if(sty>0){float X2=w*(.72f+.06f*(float)Math.cos(ph*.66)),Y2=h*(.22f+.05f*(float)Math.sin(ph*.63));p.setShader(new RadialGradient(X2,Y2,Math.max(w,h)*.27f,new int[]{0x16ffc4f0,0x10bcffeb,0x00b4ffe4},null,Shader.TileMode.CLAMP));x.drawCircle(X2,Y2,Math.max(w,h)*.27f,p);p.setShader(null);}}
+  void arcs(Canvas x,float w,float h,long n){float ph=n/900f;l.setStyle(Paint.Style.STROKE);l.setStrokeWidth(dp(1.1f));for(int i=0;i<9;i++){float y=h*(.19f+i*.075f)+(float)Math.sin(ph+i*.55)*dp(2.4f);l.setColor(Color.argb(14+(int)(6*(1+Math.sin(ph*.75+i*.5))),236,245,255));x.drawArc(new RectF(-w*.15f,y-dp(16),w*1.15f,y+dp(26)),184,172,false,l);}l.setStyle(Paint.Style.FILL);}
+  void ripple(Canvas x,R r,float q){float e=(float)Math.pow(q,.6),rad=dp(20)+Math.min(getWidth(),getHeight())*.36f*e;int al=(int)(138*(1-q)*(1-q));int fill=sty>0?0x4ed4fff4:0x46c1f4ff;p.setShader(new RadialGradient(r.x,r.y,rad,new int[]{0,fill,0},new float[]{.34f,.76f,1},Shader.TileMode.CLAMP));x.drawCircle(r.x,r.y,rad,p);p.setShader(null);int[] cc=sty>0?new int[]{Color.argb(al,255,215,244),Color.argb(al,189,255,244),Color.argb(al,191,211,255),Color.argb(al,255,247,188)}:new int[]{Color.argb(al,220,249,255),Color.argb(al,196,238,255),Color.argb(al,170,229,255),Color.argb(al,146,219,255)};float[] sc={1,.76f,.54f,.36f};l.setStyle(Paint.Style.STROKE);for(int i=0;i<4;i++){l.setColor(cc[i]);l.setStrokeWidth(dp(i==0?2:1.2f));x.drawCircle(r.x,r.y,rad*sc[i],l);}l.setStyle(Paint.Style.FILL);}
+  void ui(Canvas x,float w,float h){t.setTypeface(Typeface.create("sans",0));t.setTextAlign(Paint.Align.LEFT);t.setColor(0xfff4f7ff);t.setTextSize(dp(28));x.drawText("Ripple Code",dp(26),dp(68),t);t.setTextSize(dp(14));t.setColor(0xb6e6f1f8);x.drawText((a.isEmpty()?"등록 모드":"테스트 모드")+"  ·  탭 순서 + 마지막 스와이프",dp(27),dp(94),t);pill(x,new RectF(w-dp(192),dp(37),w-dp(110),dp(77)),"초기화");pill(x,new RectF(w-dp(102),dp(37),w-dp(20),dp(77)),"설정");t.setTextAlign(Paint.Align.CENTER);t.setTextSize(dp(17));t.setColor(0xd2f1f7fc);x.drawText(a.isEmpty()?"원하는 위치를 원하는 만큼 탭":"같은 위치를 같은 순서로 탭",w/2,h*.46f,t);t.setTextSize(dp(14));t.setColor(0x98e8f4fb);x.drawText(a.isEmpty()?"마지막에 어느 방향으로든 한 번 쭉 스와이프":"스와이프 방향은 비교하지 않음",w/2,h*.46f+dp(29),t);t.setColor(0xbaf0faff);x.drawText("스타일  "+names[sty],w/2,h-dp(97),t);t.setTextSize(dp(12));t.setColor(0x82ebf8fc);x.drawText("숨은 판정 영역: 2 × 5",w/2,h-dp(46),t);}
+  void pill(Canvas x,RectF r,String s){u.setColor(0x2affffff);x.drawRoundRect(r,dp(18),dp(18),u);t.setTextAlign(Paint.Align.LEFT);t.setTextSize(dp(13));t.setColor(0xdcf5fcff);x.drawText(s,r.left+dp(17),r.centerY()+dp(5),t);}
+  void settings(Canvas x,float w,float h){RectF s=new RectF(dp(18),h*.18f,w-dp(18),h*.82f);u.setColor(0x78020810);x.drawRect(0,0,w,h,u);u.setColor(0xe4121b2b);x.drawRoundRect(s,dp(28),dp(28),u);t.setTextAlign(Paint.Align.LEFT);t.setTextSize(dp(21));t.setColor(0xfff7faff);x.drawText("설정",s.left+dp(22),s.top+dp(34),t);for(int i=0;i<names.length;i++){RectF r=item(i,w,h);u.setColor(i==sty?0x54aee5ff:0x22ffffff);x.drawRoundRect(r,dp(20),dp(20),u);int[]z=cols[i];p.setShader(new LinearGradient(r.left+dp(10),r.top+dp(10),r.left+dp(54),r.bottom-dp(10),new int[]{Color.rgb(z[0],z[1],z[2]),Color.rgb(z[3],z[4],z[5]),Color.rgb(z[6],z[7],z[8])},null,Shader.TileMode.CLAMP));x.drawRoundRect(new RectF(r.left+dp(10),r.top+dp(10),r.left+dp(54),r.bottom-dp(10)),dp(14),dp(14),p);p.setShader(null);t.setTextSize(dp(15));t.setColor(0xfff8fbff);x.drawText(names[i],r.left+dp(66),r.centerY()+dp(5),t);}}
+  RectF item(int i,float w,float h){RectF s=new RectF(dp(18),h*.18f,w-dp(18),h*.82f);float y=s.top+dp(74)+i*dp(60);return new RectF(s.left+dp(16),y,s.right-dp(16),y+dp(52));}
+  void edge(Canvas x,float w,float h,float g,float e,long n){float ce=w/2,le=ce-g,re=ce+g,ph=n/220f,amp=dp(6)+dp(7)*e;l.setStyle(Paint.Style.STROKE);for(int side=0;side<2;side++){Path path=new Path();for(int y=0;y<=h;y+=8){float base=side==0?le:re;float xx=base+(float)Math.sin(ph+side*1.3+y*.05)*amp;if(y==0)path.moveTo(xx,y);else path.lineTo(xx,y);}l.setStrokeWidth(dp(2.3f));l.setColor(sty>0?0xccffd7f4:0xccdef6ff);x.drawPath(path,l);l.setStrokeWidth(dp(1.1f));l.setColor(sty>0?0xbcc0fff0:0xbcb4e9ff);x.drawPath(path,l);}l.setStyle(Paint.Style.FILL);}
+  public boolean onTouchEvent(MotionEvent e){if(unlocking||unlocked)return true;float x=e.getX(),y=e.getY();if(set){if(e.getAction()==0){RectF s=new RectF(dp(18),getHeight()*.18f,getWidth()-dp(18),getHeight()*.82f);if(!s.contains(x,y)){set=false;invalidate();return true;}for(int i=0;i<names.length;i++)if(item(i,getWidth(),getHeight()).contains(x,y)){sty=i;set=false;invalidate();return true;}}return true;}if(e.getAction()==0){RectF rr=new RectF(getWidth()-dp(192),dp(37),getWidth()-dp(110),dp(77)),ss=new RectF(getWidth()-dp(102),dp(37),getWidth()-dp(20),dp(77));if(rr.contains(x,y)){a.clear();c.clear();invalidate();return true;}if(ss.contains(x,y)){set=true;invalidate();return true;}dx=x;dy=y;mv=false;rs.add(new R(x,y,SystemClock.uptimeMillis()));invalidate();return true;}if(e.getAction()==2){float X=x-dx,Y=y-dy;if(X*X+Y*Y>dp(76)*dp(76))mv=true;return true;}if(e.getAction()==1){float X=x-dx,Y=y-dy;if(mv||X*X+Y*Y>dp(76)*dp(76))fin();else c.add(zone(x,y));invalidate();return true;}return true;}
+  void fin(){if(c.isEmpty())return;if(a.isEmpty()){a.addAll(c);c.clear();return;}boolean m=a.equals(c);c.clear();if(m){unlocking=true;unlockAt=SystemClock.uptimeMillis();performHapticFeedback(HapticFeedbackConstants.CONFIRM);}else performHapticFeedback(HapticFeedbackConstants.REJECT);}
+  int zone(float x,float y){int C=Math.max(0,Math.min(1,(int)(x/Math.max(1,getWidth())*2))),R=Math.max(0,Math.min(4,(int)(y/Math.max(1,getHeight())*5)));return R*2+C;}
+  final class R{float x,y;long n;R(float X,float Y,long N){x=X;y=Y;n=N;}}
+ }
 }
