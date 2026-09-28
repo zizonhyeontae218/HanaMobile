@@ -44,6 +44,10 @@ jobs:
         working-directory: ripple-demo
         run: python3 tools/apply-v09-post-unlock-gate.py
 
+      - name: Apply v0.9.1 settings hotfix
+        working-directory: ripple-demo
+        run: python3 tools/apply-v091-settings-hotfix.py
+
       - name: Fix source typo before build
         working-directory: ripple-demo
         run: sed -i 's/text\.setTextColor/text.setColor/' app/src/main/java/com/openai/rippledemo/MainActivity.java
