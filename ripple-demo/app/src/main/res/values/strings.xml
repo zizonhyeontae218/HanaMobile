@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Ripple Code</string>
+    <string name="ripple_gate_accessibility_label">Ripple Code post-unlock gate</string>
+    <string name="ripple_gate_accessibility_description">Shows Ripple Code after Android unlocks the device. It does not read or inspect screen content.</string>
+</resources>
