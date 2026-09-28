@@ -38,7 +38,7 @@ jobs:
 
       - name: Apply v0.8 Surface Tension settings polish
         working-directory: ripple-demo
-        run: python3 tools/apply-v08-settings.py
+        run: python3 tools/apply-v08-settings-fixed.py
 
       - name: Fix source typo before build
         working-directory: ripple-demo
