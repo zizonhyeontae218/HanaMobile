@@ -10,8 +10,8 @@ android {
         applicationId = "com.openai.rippledemo"
         minSdk = 33
         targetSdk = 35
-        versionCode = 8
-        versionName = "0.8-home-bridge-motion"
+        versionCode = 9
+        versionName = "0.9-post-unlock-gate"
     }
 
     compileOptions {
